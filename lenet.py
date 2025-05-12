@@ -1,3 +1,4 @@
+# %%
 import numpy as np
 import torch
 import torch.nn as nn
@@ -6,6 +7,7 @@ from torch.fx import symbolic_trace
 from enum import Enum
 import torch.fx as fx
 
+# %%
 #Defining the convolutional neural network
 class LeNet5(nn.Module):
     def __init__(self, num_classes):
@@ -61,13 +63,13 @@ symbolic_traced: torch.fx.GraphModule = symbolic_trace(model)
 # %%
 symbolic_traced.graph.print_tabular()
 
-# # %%
+# %%
 # for node in symbolic_traced.graph.nodes:
 #     if node.op == "call_module":
-#         # print(node.op, node.target, node.args, getattr(symbolic_traced, node.target))
-#         # print(type(getattr(symbolic_traced, node.target)))
+#         print(node.op, node.target, node.args, getattr(symbolic_traced, node.target))
+#         print(type(getattr(symbolic_traced, node.target)))
 #     elif node.op == "call_method":
-#         # print(node.op, node.target, node.args)
+#         print(node.op, node.target, node.args)
 
 # %%
 # Helper function that calculates the size of each layer in the ECG
@@ -135,11 +137,6 @@ class MAPPING_RELATIONSHIP(Enum):
     FUSE_SHUFFLE = 3
 
 def mapping_check(op, successor):
-    # print("Mapping check")
-    # print("op:", op)
-    # print("successor:", successor)
-    # print("op type:", type(getattr(symbolic_traced, op.target)))
-    # print("successor type:", type(getattr(symbolic_traced, successor.target)))
     op1_mapping = mapping_type_table.get(type(getattr(symbolic_traced, op.target)))
     successor_mapping = mapping_type_table.get(type(getattr(symbolic_traced, successor.target)))
 
@@ -205,15 +202,6 @@ def generate_seed(nodes):
     
 
 def successors(op):
-    # # Get the successors that folow the current node
-    # successors = []
-    # # Find index of the current node
-    # index = all_operators.index(op)
-    # # Successors are the nodes that follow the current node
-    # successors = all_operators[index + 1:]
-
-    # return successors
-
     successors = list(op.users.keys())
 
     # Remove successors that meet the conditions
@@ -222,17 +210,6 @@ def successors(op):
     return successors
 
 def predecessors(op):
-    # Get the predecessors that folow the current node
-    # predecessors = []
-    # # Find index of the current node
-    # index = all_operators.index(op)
-    # # Predecessors are the nodes that precede the current node
-    # predecessors = all_operators[:index]
-
-    # return predecessors
-
-    # pred = [n for n in fx.graph.map_arg(test_node.args, lambda x: x if isinstance(x, fx.Node) else None) if n]
-
     pred = list(op.all_input_nodes)
 
     # Check if the pred is "placeholder" or "size"/"reshape"
@@ -279,36 +256,6 @@ def fuse_predecessor(sp, predecessor, block):
     for fusing_op in predecessors(predecessor):
         fuse_predecessor(sp, fusing_op, block)
 
-# unfused_ops = all_operators
-# seed_node = generate_seed(unfused_ops)
-# # print(successors(unfused_ops[0]))
-# # print(predecessors(unfused_ops[0]))
-# # print(successors(unfused_ops[4]))
-# # print(predecessors(unfused_ops[4]))
-
-# test_block = {unfused_ops[-1]}
-# test_block = {seed_node}
-# fuse_successor(seed_node, successors(seed_node)[0], test_block)
-
-# print("Predecssors: ", predecessors(unfused_ops[3]))
-
-# print("Block after fusing:", test_block)
-
-# test_node = unfused_ops[-1]
-# # Print node successors using users and keys
-# print("Successors: ", successors(test_node))
-
-# test_node = unfused_ops[3]
-# print("Successors: ", successors(test_node))
-# test_node = unfused_ops[4]
-# print("Predecessors: ", predecessors(test_node))
-
-# test_node = unfused_ops[7]
-# print("Successors: ", successors(test_node))
-
-# test_node = unfused_ops[8]
-# print("Predecessors: ", predecessors(test_node))
-
 # <Algorithm Entry>
 unfused_ops = set(all_operators)
 print("Unfused ops: ", unfused_ops)
@@ -333,12 +280,10 @@ while (sp := generate_seed(unfused_ops)):
     # Add block to fused_groups
     fused_groups[sp] = block
 
-print("\n--- Planner result ---")
+print("\n--- Fusion plan result ---")
 print("Fused groups: ", fused_groups)
 
 # %%
-
-
 # Check for the best operators to fuse from each group of fused_groups
 def find_best_fusion(nodes, seed_node):
     # from the seed node, check if the successor and predecssor are in the nodes list
@@ -382,29 +327,17 @@ def find_best_fusion(nodes, seed_node):
         else:
             break
 
-    # print("Predecessors to fuse: ", pred_fuse)
-    # print("Successors to fuse: ", suc_fuse)
-    # # Print the fuse types
-    # print("Current successor type: ", cur_suc_type)
-    # print("Current predecessor type: ", cur_pred_type)
-
     # See if predecessor and successor can be fused
     suc_pred_fuse_type = mapping_check_relationship(cur_suc_type, cur_pred_type)
 
     if suc_pred_fuse_type == MAPPING_RELATIONSHIP.FUSE_BREAK:
-        # print("Can't fuse predecessor and successor")
         # pick the best one (number of fusions)
         if len(pred_fuse) > len(suc_fuse):
-            # print("Fusing predecessors")
-            return pred_fuse
+            return pred_fuse, suc_fuse[1:]
         else:
-            # print("Fusing successors")
-            return suc_fuse
+            return suc_fuse, pred_fuse[1:]
     else:
-        # print("Fusing predecessor and successor")
-        # print("resulting type: ", suc_pred_fuse_type)
-        # Return the fused group (remove the first element of the successor list)
-        return pred_fuse + suc_fuse[1:]
+        return pred_fuse + suc_fuse[1:], []
 
 
 def check_successor(nodes, successor):
@@ -420,15 +353,16 @@ def check_predecessor(nodes, predecessor):
     return False
 
 operators_to_fuse = []
+operators_unfused = []
 
 for seed, seed_block in fused_groups.items():
-    # print("Seed node: ", seed)
-    # print("Fused block: ", seed_block)
-    # Check if the seed node is in the fused block
-    operators_to_fuse.append(find_best_fusion(seed_block, seed))
+    fuse, not_fused = find_best_fusion(seed_block, seed)
+    operators_to_fuse.append(fuse)
+    operators_unfused.extend(not_fused)
 
 print("\n--- Fused operators ---")
 print("Operators to fuse: ", operators_to_fuse)
+print("Operator candidates that could not be fused: ", operators_unfused)
  
 
 # %%
